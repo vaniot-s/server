@@ -1,4 +1,10 @@
-# The external ip of the server
+# The external ip of the server.
+# When using a dual stack setup define both IPv4 & IPv6 separated by a comma.
+# Execute the following command on the server you want to host Screego
+# to find your external ip.
+#   curl 'https://api.ipify.org'
+# Example:
+#   192.168.178.2,2a01:c22:a87c:e500:2d8:61ff:fec7:f92a
 SCREEGO_EXTERNAL_IP=
 
 # A secret which should be unique. Is used for cookie authentication.
@@ -18,6 +24,18 @@ SCREEGO_SERVER_ADDRESS=0.0.0.0:5050
 # The address the TURN server will listen on.
 SCREEGO_TURN_ADDRESS=0.0.0.0:3478
 
+# Limit the ports that TURN will use for data relaying.
+# Format: min:max
+# Example:
+#   50000:55000
+SCREEGO_TURN_PORT_RANGE=
+
+# If true, the TURN server will compare the remote IP of the request with the
+# remote ip of the existing WebSocket connection and deny access if it doesn't
+# match. Disable this feature, if you use some kind of proxy which changes the
+# remote ip.
+SCREEGO_TURN_STRICT_AUTH=true
+
 # If reverse proxy headers should be trusted.
 # Screego uses ip whitelisting for authentication
 # of TURN connections. When behind a proxy the ip is always the proxy server.
@@ -33,6 +51,7 @@ SCREEGO_TRUST_PROXY_HEADERS=false
 SCREEGO_AUTH_MODE=turn
 
 # Defines origins that will be allowed to access Screego (HTTP + WebSocket)
+# The default value is sufficient for most use-cases.
 # Example Value: https://screego.net,https://sub.gotify.net
 SCREEGO_CORS_ALLOWED_ORIGINS=
 

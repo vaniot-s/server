@@ -39,7 +39,7 @@ const flags = (user: RoomUser) => {
     if (user.owner) {
         result.push('Owner');
     }
-    if (user.sharing) {
+    if (user.streaming) {
         result.push('Streaming');
     }
     if (!result.length) {
@@ -362,6 +362,13 @@ const useStyles = makeStyles((theme: Theme) => ({
         top: '50%',
         left: '50%',
         transform: 'translate(-50%,-50%)',
+
+        '&::-webkit-media-controls-start-playback-button': {
+            display: 'none!important',
+        },
+        '&::-webkit-media-controls': {
+            display: 'none!important',
+        },
     },
     smallVideo: {
         minWidth: '100%',

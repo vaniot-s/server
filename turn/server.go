@@ -12,11 +12,10 @@ import (
 )
 
 type Server struct {
-	TurnAddress   string
-	StunAddress   string
-	lock          sync.RWMutex
-	strictIPCheck bool
-	lookup        map[string]Entry
+	Port       string
+	lock       sync.RWMutex
+	strictAuth bool
+	lookup     map[string]Entry
 }
 
 type Entry struct {
@@ -26,44 +25,57 @@ type Entry struct {
 
 const Realm = "screego"
 
+type Generator struct {
+	ipv4 net.IP
+	ipv6 net.IP
+	turn.RelayAddressGenerator
+}
+
+func (r *Generator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
+	conn, addr, err := r.RelayAddressGenerator.AllocatePacketConn(network, requestedPort)
+	relayAddr := *addr.(*net.UDPAddr)
+	if r.ipv6 == nil || (relayAddr.IP.To4() != nil && r.ipv4 != nil) {
+		relayAddr.IP = r.ipv4
+	} else {
+		relayAddr.IP = r.ipv6
+	}
+	if err == nil {
+		log.Debug().Str("addr", addr.String()).Str("relayaddr", relayAddr.String()).Msg("TURN allocated")
+	}
+	return conn, &relayAddr, err
+}
+
 func Start(conf config.Config) (*Server, error) {
-	udpListener, err := net.ListenPacket("udp4", conf.TurnAddress)
+	udpListener, err := net.ListenPacket("udp", conf.TurnAddress)
 	if err != nil {
 		return nil, fmt.Errorf("udp: could not listen on %s: %s", conf.TurnAddress, err)
 	}
-	tcpListener, err := net.Listen("tcp4", conf.TurnAddress)
+	tcpListener, err := net.Listen("tcp", conf.TurnAddress)
 	if err != nil {
 		return nil, fmt.Errorf("tcp: could not listen on %s: %s", conf.TurnAddress, err)
 	}
 
-	split := strings.SplitN(conf.TurnAddress, ":", 2)
+	split := strings.Split(conf.TurnAddress, ":")
 	svr := &Server{
-		TurnAddress:   fmt.Sprintf("turn:%s:%s", conf.ExternalIP, split[1]),
-		StunAddress:   fmt.Sprintf("stun:%s:%s", conf.ExternalIP, split[1]),
-		lookup:        map[string]Entry{},
-		strictIPCheck: conf.TurnStrictAuth,
+		Port:       split[len(split)-1],
+		lookup:     map[string]Entry{},
+		strictAuth: conf.TurnStrictAuth,
+	}
+
+	gen := &Generator{
+		ipv4:                  conf.ExternalIPV4,
+		ipv6:                  conf.ExternalIPV6,
+		RelayAddressGenerator: generator(conf),
 	}
 
 	_, err = turn.NewServer(turn.ServerConfig{
 		Realm:       Realm,
 		AuthHandler: svr.authenticate,
 		ListenerConfigs: []turn.ListenerConfig{
-			{
-				Listener: tcpListener,
-				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: net.ParseIP(conf.ExternalIP),
-					Address:      "0.0.0.0",
-				},
-			},
+			{Listener: tcpListener, RelayAddressGenerator: gen},
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
-			{
-				PacketConn: udpListener,
-				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: net.ParseIP(conf.ExternalIP),
-					Address:      "0.0.0.0",
-				},
-			},
+			{PacketConn: udpListener, RelayAddressGenerator: gen},
 		},
 	})
 	if err != nil {
@@ -72,6 +84,15 @@ func Start(conf config.Config) (*Server, error) {
 
 	log.Info().Str("addr", conf.TurnAddress).Msg("Start TURN/STUN")
 	return svr, nil
+}
+
+func generator(conf config.Config) turn.RelayAddressGenerator {
+	min, max, useRange := conf.PortRange()
+	if useRange {
+		log.Debug().Uint16("min", min).Uint16("max", max).Msg("Using Port Range")
+		return &RelayAddressGeneratorPortRange{MinPort: min, MaxPort: max}
+	}
+	return &RelayAddressGeneratorNone{}
 }
 
 func (a *Server) Allow(username, password string, addr net.IP) {
@@ -113,20 +134,11 @@ func (a *Server) authenticate(username, realm string, addr net.Addr) ([]byte, bo
 
 	authIP := entry.addr
 
-	if !connectedIp.Equal(authIP) {
-		if a.strictIPCheck {
-			log.Debug().Interface("allowedIp", addr.String()).Interface("connectingIp", entry.addr.String()).Msg("TURN strict ip check failed")
-			return nil, false
-		}
-
-		conIPIsV4 := connectedIp.To4() != nil
-		authIPIsV4 := authIP.To4() != nil
-
-		if authIPIsV4 == conIPIsV4 {
-			log.Debug().Interface("allowedIp", addr.String()).Interface("connectingIp", entry.addr.String()).Msg("TURN ip check failed")
-			return nil, false
-		}
+	if a.strictAuth && !connectedIp.Equal(authIP) {
+		log.Debug().Interface("allowedIp", addr.String()).Interface("connectingIp", entry.addr.String()).Msg("TURN strict auth check failed")
+		return nil, false
 	}
+
 	log.Debug().Interface("addr", addr.String()).Str("realm", realm).Msg("TURN authenticated")
 	return entry.password, true
 }
